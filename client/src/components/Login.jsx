@@ -1,32 +1,21 @@
+// src/components/Login.jsx
 import React, { useState } from "react";
-import axios from "axios";
 import { useAuth } from "../context/AuthContext";
 
 const Login = ({ onLoginSuccess }) => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const { login } = useAuth();
+  const { login, error } = useAuth();
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    try {
-      const res = await axios.post("http://localhost:5000/api/auth/login", {
-        username,
-        password,
-      });
+    const loggedInUser = await login(username, password);
 
-      // ✅ Pass correct values to AuthContext
-      login(res.data.username, res.data.token);
-
-      // ✅ Optional: callback after success
+    if (loggedInUser) {
+      console.log("🔓 Redirecting to chat...");
       if (onLoginSuccess) onLoginSuccess();
-
-      alert("Login successful!");
-    } catch (err) {
-      console.error("Login failed:", err);
-      const message =
-        err.response?.data?.message || "An unexpected error occurred.";
-      alert("Login failed: " + message);
+    } else {
+      alert(error || "Login failed, please check credentials.");
     }
   };
 

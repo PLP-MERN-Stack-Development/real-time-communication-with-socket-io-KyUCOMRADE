@@ -1,38 +1,90 @@
+// server.js
 const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
 const mongoose = require("mongoose");
 const cors = require("cors");
-const http = require("http");
-const { initSocket } = require("./socket/socket");
+const dotenv = require("dotenv");
+
+const Message = require("./models/Message");
 const authRoutes = require("./routes/authRoutes");
 
+dotenv.config();
+
 const app = express();
-const server = http.createServer(app);
-const PORT = process.env.PORT || 5000;
 
-// Middleware
-app.use(cors({
-  origin: "http://localhost:5173",
-  methods: ["GET", "POST"],
-  credentials: true,
-}));
+// --- Middleware ---
+app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// MongoDB connection
-mongoose
-  .connect("mongodb://localhost:27017/socketchat")
-  .then(() => console.log("✅ MongoDB (socketchat) connected"))
-  .catch((err) => console.error("❌ MongoDB connection error:", err));
-
-// Routes
+// --- Routes ---
 app.use("/api/auth", authRoutes);
 
-// Default route
-app.get("/", (req, res) => {
-  res.send("🚀 Server is running...");
+// --- Create HTTP server for Socket.io ---
+const server = http.createServer(app);
+
+// --- MongoDB Connection ---
+mongoose
+  .connect("mongodb://localhost:27017/socketchat", {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch((err) => console.log("❌ MongoDB Error:", err.message));
+
+// --- Socket.io Setup ---
+const io = new Server(server, {
+  cors: { origin: "http://localhost:5173", methods: ["GET", "POST"] },
+  pingInterval: 25000,
+  pingTimeout: 60000,
 });
 
-// Initialize socket
-initSocket(server);
+// --- Namespace for Chat ---
+const chatNamespace = io.of("/chat");
 
-// Start the server
-server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+// Track online users
+const onlineUsers = new Map();
+
+chatNamespace.on("connection", (socket) => {
+  console.log(`🟢 [Chat] ${socket.id} connected`);
+
+  socket.on("joinRoom", async ({ username, room }) => {
+    socket.join(room);
+    onlineUsers.set(socket.id, { username, room });
+
+    const history = await Message.find({ room }).sort({ createdAt: 1 }).limit(50);
+    socket.emit("previousMessages", history);
+
+    const usersInRoom = Array.from(onlineUsers.values())
+      .filter((u) => u.room === room)
+      .map((u) => u.username);
+
+    chatNamespace.to(room).emit("updateUsers", usersInRoom);
+    console.log(`👤 ${username} joined room: ${room}`);
+  });
+
+  socket.on("sendMessage", async ({ username, text, room, time }) => {
+    const msg = new Message({ username, text, room, time });
+    await msg.save();
+    chatNamespace.to(room).emit("receiveMessage", msg);
+  });
+
+  socket.on("disconnect", () => {
+    const user = onlineUsers.get(socket.id);
+    if (user) {
+      console.log(`🔴 ${user.username} left room: ${user.room}`);
+      onlineUsers.delete(socket.id);
+
+      const usersInRoom = Array.from(onlineUsers.values())
+        .filter((u) => u.room === user.room)
+        .map((u) => u.username);
+
+      chatNamespace.to(user.room).emit("updateUsers", usersInRoom);
+    }
+  });
+});
+
+// --- Start the server ---
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

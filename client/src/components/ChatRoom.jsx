@@ -1,82 +1,78 @@
-import React, { useEffect, useState } from "react";
+// src/components/ChatRoom.jsx
+import React, { useEffect, useState, useRef } from "react";
 import { io } from "socket.io-client";
 import { useAuth } from "../context/AuthContext";
+import MessageList from "./MessageList";
+import MessageInput from "./MessageInput";
+import OnlineUsers from "./OnlineUsers";
+import RoomSelector from "./RoomSelector";
+import "../styles/ChatRoom.css";
 
 const ChatRoom = () => {
   const { user, logout } = useAuth();
-  const [message, setMessage] = useState("");
+  const [room, setRoom] = useState("General");
   const [messages, setMessages] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState([]);
+  const [typingUser, setTypingUser] = useState("");
+  const socketRef = useRef(null);
 
+  // 🔌 Connect to socket.io chat namespace
   useEffect(() => {
-    const socket = io("http://localhost:5000");
+    if (!user) return;
 
-    if (user) {
-      socket.emit("userConnected", user.username);
-    }
+    socketRef.current = io("http://localhost:5000/chat");
 
-    socket.on("previousMessages", (history) => setMessages(history));
-    socket.on("updateUsers", (users) => setOnlineUsers(users));
-    socket.on("receiveMessage", (data) => {
-      setMessages((prev) => [...prev, data]);
-    });
+    socketRef.current.emit("joinRoom", { username: user.username, room });
 
-    return () => socket.disconnect();
-  }, [user]);
+    socketRef.current.on("previousMessages", (history) => setMessages(history));
+    socketRef.current.on("receiveMessage", (msg) =>
+      setMessages((prev) => [...prev, msg])
+    );
+    socketRef.current.on("updateUsers", (users) => setOnlineUsers(users));
+    socketRef.current.on("typing", (username) => setTypingUser(username));
+    socketRef.current.on("stopTyping", () => setTypingUser(""));
 
-  const sendMessage = () => {
-    if (message.trim()) {
+    return () => {
+      socketRef.current.disconnect();
+    };
+  }, [user, room]);
+
+  // 💬 Send message
+  const sendMessage = (text) => {
+    if (text.trim()) {
       const msgData = {
         username: user.username,
-        text: message,
-        time: new Date().toLocaleTimeString(),
+        text,
+        room,
+        time: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
       };
-      const socket = io("http://localhost:5000");
-      socket.emit("sendMessage", msgData);
-      setMessage("");
+      socketRef.current.emit("sendMessage", msgData);
     }
+  };
+
+  // 🧠 Handle typing indicator
+  const handleTyping = () => {
+    socketRef.current.emit("typing", user.username);
+    setTimeout(() => socketRef.current.emit("stopTyping"), 2000);
   };
 
   return (
     <div className="chat-container">
       <div className="header">
-        <h2>
-          Welcome,{" "}
-          {typeof user?.username === "string"
-            ? user.username
-            : user?.username?.message || "Guest"}
-        </h2>
+        <h2>Room: {room}</h2>
         <button onClick={logout}>Logout</button>
       </div>
 
-      <div className="online-users">
-        🟢 <strong>Online Users:</strong>
-        <ul>
-          {onlineUsers.map((name, i) => (
-            <li key={i}>{name}</li>
-          ))}
-        </ul>
-      </div>
+      <RoomSelector setRoom={setRoom} />
 
-      <div className="messages">
-        {messages.map((msg, index) => (
-          <p key={index}>
-            <strong>{msg.username}</strong>: {msg.text}{" "}
-            <span className="time">({msg.time})</span>
-          </p>
-        ))}
-      </div>
+      <OnlineUsers users={onlineUsers} />
+      <MessageList messages={messages} currentUser={user.username} />
+      {typingUser && <p className="typing">{typingUser} is typing...</p>}
 
-      <div className="input-section">
-        <input
-          type="text"
-          placeholder="Type a message..."
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-        />
-        <button onClick={sendMessage}>Send</button>
-      </div>
+      <MessageInput onSend={sendMessage} onTyping={handleTyping} />
     </div>
   );
 };

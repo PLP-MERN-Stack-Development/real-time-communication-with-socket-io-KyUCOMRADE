@@ -21,10 +21,13 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
-      const res = await axios.post("http://localhost:5000/api/auth/login", {
-        username,
-        password,
-      });
+      const API_URL = process.env.REACT_APP_BACKEND_URL;
+
+const res = await axios.post(`${API_URL}/api/auth/login`, {
+  username,
+  password,
+});
+
 
       console.log("✅ Login successful:", res.data);
 
